@@ -1,0 +1,17 @@
+{
+  "name": "STEP16 — MIDI Sequencer",
+  "short_name": "STEP16",
+  "description": "4-track, 16-step MIDI sequencer with 10 memory slots.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0e0f13",
+  "theme_color": "#0e0f13",
+  "categories": ["music", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

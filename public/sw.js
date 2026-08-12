@@ -64,8 +64,17 @@ self.addEventListener('message', e => {
 const offline = () =>
   new Response('', { status: 503, statusText: 'Offline', headers: { 'Cache-Control': 'no-store' } })
 
+// The copy has to be taken *now*, synchronously: `res` is handed straight back
+// to respondWith(), which starts reading its body. Cloning later — inside the
+// caches.open() callback — throws "Response body is already used".
 const store = (req, res) => {
-  if (res?.ok) caches.open(CACHE).then(c => c.put(req, res.clone()))
+  if (res?.ok) {
+    const copy = res.clone()
+    caches
+      .open(CACHE)
+      .then(c => c.put(req, copy))
+      .catch(() => null) // a full or evicted cache must not reject into the page
+  }
   return res
 }
 

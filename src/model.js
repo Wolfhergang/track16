@@ -4,12 +4,17 @@ export const STORAGE_KEY = 'step16.v2'
 const LEGACY_KEY = 'step16.v1' // one global slot bank, one note per step
 
 export const MAX_TRACKS = 5
+export const SECTIONS = 4 // A–D: parts of a song, each with its own slots
 export const TRACK_COLORS = ['#4ad6a0', '#54a8ff', '#ffb84d', '#c07dff', '#ff7ba6']
 const DEFAULT_NOTES = [36, 38, 42, 60, 48] // kick, snare, hat, lead, bass
 const DEFAULT_NAMES = ['TRK 1', 'TRK 2', 'TRK 3', 'TRK 4', 'TRK 5']
 
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 export const noteName = n => `${NOTE_NAMES[n % 12]}${Math.floor(n / 12) - 1}`
+
+export const BPM_MIN = 20
+export const BPM_MAX = 220
+export const clampBpm = b => Math.min(BPM_MAX, Math.max(BPM_MIN, Math.round(b) || 120))
 
 export const clampNote = n => Math.min(127, Math.max(0, Math.round(n)))
 export const clampLen = l => Math.min(STEPS, Math.max(1, Math.round(l) || 1))
@@ -41,15 +46,25 @@ const clonePattern = p => ({
   steps: p.steps.map(s => ({ ...s, notes: s.notes.map(n => ({ ...n })) })),
 })
 
+// A track's identity is shared by every section — same name, channel and
+// switches throughout the song. Only its patterns change from section to
+// section, and those live in `sections` below.
 const makeTrack = i => ({
   name: DEFAULT_NAMES[i] ?? `TRK ${i + 1}`,
   channel: (i % 16) + 1,
   note: DEFAULT_NOTES[i] ?? 60,
   mute: false,
   overdub: false, // false: a recorded note replaces the step, true: it piles on
+  mono: false, // one note per step: the first one played wins, the rest are dropped
+})
+
+// One section's half of a track: the memory slots it plays there.
+const makeSlotTrack = () => ({
   currentSlot: 0,
   slots: [emptyPattern()], // tracks start with one slot; `+` adds up to SLOTS
 })
+
+const makeSection = count => ({ tracks: Array.from({ length: count }, makeSlotTrack) })
 
 export function initialState() {
   return {
@@ -60,12 +75,20 @@ export function initialState() {
     cursor: 0, // step-record write head
     song: false, // song mode: each track cycles through its slots, one per pass
     tracks: Array.from({ length: TRACKS }, (_, i) => makeTrack(i)),
+    // all four exist from the start — an empty one is just silence
+    sections: Array.from({ length: SECTIONS }, () => makeSection(TRACKS)),
+    section: 0, // the section being played and edited
   }
 }
 
 /* ---------------- selectors ---------------- */
 
 export const trackPattern = track => track.slots[track.currentSlot]
+
+// The slot half of every track in the section that is up right now.
+export const sectionTracks = state => state.sections[state.section].tracks
+// Config and slots of one track, joined — what the rack and the pads work with.
+export const liveTrack = (state, i) => ({ ...state.tracks[i], ...sectionTracks(state)[i] })
 export const stepSounds = step => step.notes.length > 0
 export const patternHasData = pattern => pattern.steps.some(stepSounds)
 export const pitches = step => step.notes.map(n => n.note)
@@ -138,6 +161,16 @@ const trimSlots = slots => {
   return slots.slice(0, last + 1)
 }
 
+// Slots and their patterns, as saved by any older shape. `src` is a track from
+// a save (which used to carry its own slots) or one section's half of it.
+function readSlots(src, fallback) {
+  const saw = Math.min(SLOTS, Math.max(1, src?.slots?.length || 1))
+  const slots = trimSlots(
+    Array.from({ length: saw }, (_, s) => normalizePattern(src?.slots?.[s], fallback)),
+  )
+  return { slots, currentSlot: clampIndex(src?.currentSlot, slots.length) }
+}
+
 function hydrate(saved) {
   const base = initialState()
   const count = Math.min(MAX_TRACKS, Math.max(1, saved?.tracks?.length || base.tracks.length))
@@ -145,51 +178,59 @@ function hydrate(saved) {
     const def = makeTrack(i)
     const t = saved?.tracks?.[i]
     if (!t) return def
-    const fallback = t.note ?? def.note
-    const saw = Math.min(SLOTS, Math.max(1, t.slots?.length || 1))
-    const slots = trimSlots(
-      Array.from({ length: saw }, (_, s) => normalizePattern(t.slots?.[s], fallback)),
-    )
-    return {
-      ...def,
-      ...t,
-      currentSlot: Math.min(slots.length - 1, Math.max(0, t.currentSlot ?? 0)),
-      slots,
-    }
+    // saves from before sections kept slots here — those are stripped off and
+    // become section A below
+    const { slots, currentSlot, ...cfg } = t
+    return { ...def, ...cfg }
   })
+  // Pre-sections saves have no `sections`: the tracks' own slots are section A.
+  // Missing sections (older save, fewer of them) come back empty.
+  const savedSections = saved?.sections?.length ? saved.sections : [{ tracks: saved?.tracks || [] }]
+  const sections = Array.from({ length: SECTIONS }, (_, s) => ({
+    tracks: Array.from({ length: count }, (_, i) =>
+      readSlots(savedSections[s]?.tracks?.[i], saved?.tracks?.[i]?.note ?? makeTrack(i).note),
+    ),
+  }))
   return {
     ...base,
     ...saved,
     tracks,
-    selectedTrack: Math.min(count - 1, Math.max(0, saved?.selectedTrack ?? 0)),
+    sections,
+    section: clampIndex(saved?.section, sections.length),
+    // a tempo saved before the ceiling moved is pulled back into range
+    bpm: clampBpm(saved?.bpm ?? base.bpm),
+    selectedTrack: clampIndex(saved?.selectedTrack, count),
   }
 }
 
-// v1 kept one bank of 10 slots, each holding all 4 tracks. Fan it out per track.
+// v1 kept one bank of 10 slots, each holding all 4 tracks. Fan it out per
+// track, into section A — v1 had no sections, so B–D open empty.
 function migrateV1(old) {
   const base = initialState()
+  const banks = base.tracks.map((def, i) => {
+    const fallback = old.tracks?.[i]?.note ?? def.note
+    const slots = trimSlots(
+      Array.from({ length: SLOTS }, (_, s) =>
+        normalizePattern(old.slots?.[s]?.tracks?.[i], fallback),
+      ),
+    )
+    return { slots, currentSlot: clampIndex(old.currentSlot, slots.length) }
+  })
   return {
     ...base,
-    bpm: old.bpm ?? base.bpm,
+    bpm: clampBpm(old.bpm ?? base.bpm),
     swing: old.swing ?? base.swing,
     tracks: base.tracks.map((def, i) => {
       const cfg = old.tracks?.[i] || {}
-      const fallback = cfg.note ?? def.note
-      const slots = trimSlots(
-        Array.from({ length: SLOTS }, (_, s) =>
-          normalizePattern(old.slots?.[s]?.tracks?.[i], fallback),
-        ),
-      )
       return {
         ...def,
         name: cfg.name ?? def.name,
         channel: cfg.channel ?? def.channel,
-        note: fallback,
+        note: cfg.note ?? def.note,
         mute: !!cfg.mute,
-        currentSlot: Math.min(slots.length - 1, Math.max(0, old.currentSlot ?? 0)),
-        slots,
       }
     }),
+    sections: base.sections.map((sec, s) => (s === 0 ? { tracks: banks } : sec)),
   }
 }
 
@@ -204,50 +245,98 @@ export function reducer(state, action) {
     case 'track': // patch one track config
       return patchTrack(state, a.index, a.patch)
 
+    // A track exists in every section, so it is added to and removed from all
+    // of them at once — only its patterns are per-section.
     case 'addTrack': {
       if (state.tracks.length >= MAX_TRACKS) return state
       const index = state.tracks.length
-      return { ...state, tracks: [...state.tracks, makeTrack(index)], selectedTrack: index }
+      return {
+        ...state,
+        tracks: [...state.tracks, makeTrack(index)],
+        sections: state.sections.map(sec => ({ tracks: [...sec.tracks, makeSlotTrack()] })),
+        selectedTrack: index,
+      }
     }
 
     case 'removeTrack': {
       if (state.tracks.length < 2) return state // never leave an empty rack
       const tracks = state.tracks.filter((_, i) => i !== a.index)
-      return { ...state, tracks, selectedTrack: Math.min(state.selectedTrack, tracks.length - 1) }
+      return {
+        ...state,
+        tracks,
+        sections: state.sections.map(sec => ({
+          tracks: sec.tracks.filter((_, i) => i !== a.index),
+        })),
+        selectedTrack: Math.min(state.selectedTrack, tracks.length - 1),
+      }
+    }
+
+    // A section always starts on slot 1 of every track, so a part sounds the
+    // same however you came into it.
+    case 'selectSection': {
+      const index = clampIndex(a.index, state.sections.length)
+      return {
+        ...state,
+        section: index,
+        sections: state.sections.map((sec, s) =>
+          s !== index ? sec : { tracks: sec.tracks.map(t => ({ ...t, currentSlot: 0 })) },
+        ),
+      }
+    }
+
+    // Hand a whole part on to the next one — every track's slots, deep-copied,
+    // so the copy is edited into a variation without touching the original.
+    case 'copySection': {
+      const to = a.from + 1
+      if (!state.sections[a.from] || !state.sections[to]) return state
+      const src = state.sections[a.from].tracks
+      return {
+        ...state,
+        sections: state.sections.map((sec, s) =>
+          s !== to
+            ? sec
+            : {
+                tracks: sec.tracks.map((t, i) =>
+                  src[i]
+                    ? { currentSlot: src[i].currentSlot, slots: src[i].slots.map(clonePattern) }
+                    : t,
+                ),
+              },
+        ),
+      }
     }
 
     case 'selectSlot':
-      return patchTrack(state, a.track, { currentSlot: a.slot })
+      return patchSlots(state, a.track, { currentSlot: a.slot })
 
     // Song mode moved on: point every track at the slot now sounding, so what
     // you edit and record into is what you hear.
     case 'syncSlots':
-      return {
-        ...state,
-        tracks: state.tracks.map((t, i) => {
+      return mapSection(state, tracks =>
+        tracks.map((t, i) => {
           const slot = a.slots[i]
           if (slot == null || slot === t.currentSlot) return t
-          return { ...t, currentSlot: Math.min(t.slots.length - 1, Math.max(0, slot)) }
+          return { ...t, currentSlot: clampIndex(slot, t.slots.length) }
         }),
-      }
+      )
 
     // A new slot starts as a copy of the last one, so a song is built by
     // duplicating a pattern and varying it rather than starting from silence.
     case 'addSlot': {
-      const t = state.tracks[a.track]
+      const t = sectionTracks(state)[a.track]
       if (t.slots.length >= SLOTS) return state
       const last = t.slots[t.slots.length - 1]
-      return patchTrack(state, a.track, {
+      return patchSlots(state, a.track, {
         slots: [...t.slots, clonePattern(last)],
         currentSlot: t.slots.length,
       })
     }
 
     case 'removeSlot': {
-      const t = state.tracks[a.track]
+      const t = sectionTracks(state)[a.track]
       if (t.slots.length < 2) return state // a track always keeps one slot
       const slots = t.slots.filter((_, i) => i !== a.slot)
-      return patchTrack(state, a.track, {
+      return patchSlots(state, a.track, {
         slots,
         currentSlot: Math.min(t.currentSlot, slots.length - 1),
       })
@@ -281,6 +370,16 @@ export function reducer(state, action) {
     case 'clearTrack': // clear this track's current slot
       return mapPattern(state, a.track, s => ({ ...s, notes: [] }))
 
+    // Wipe the whole song: every section, every slot, back to one empty slot
+    // per track. Track config, tempo and swing are kept.
+    case 'clearAll':
+      return {
+        ...state,
+        sections: state.sections.map(() => makeSection(state.tracks.length)),
+        selectedStep: 0,
+        cursor: 0,
+      }
+
     case 'load':
       return a.state
 
@@ -289,6 +388,8 @@ export function reducer(state, action) {
   }
 }
 
+const clampIndex = (i, length) => Math.min(length - 1, Math.max(0, i ?? 0))
+
 function patchTrack(state, index, patch) {
   return {
     ...state,
@@ -296,11 +397,24 @@ function patchTrack(state, index, patch) {
   }
 }
 
-function mapPattern(state, track, fn) {
-  return patchTrack(state, track, {
-    slots: state.tracks[track].slots.map((p, i) =>
-      i !== state.tracks[track].currentSlot ? p : { steps: p.steps.map(fn) },
+// Slot edits only ever touch the section that is up.
+function mapSection(state, fn) {
+  return {
+    ...state,
+    sections: state.sections.map((sec, s) =>
+      s === state.section ? { tracks: fn(sec.tracks) } : sec,
     ),
+  }
+}
+
+function patchSlots(state, index, patch) {
+  return mapSection(state, tracks => tracks.map((t, i) => (i === index ? { ...t, ...patch } : t)))
+}
+
+function mapPattern(state, track, fn) {
+  const t = sectionTracks(state)[track]
+  return patchSlots(state, track, {
+    slots: t.slots.map((p, i) => (i !== t.currentSlot ? p : { steps: p.steps.map(fn) })),
   })
 }
 

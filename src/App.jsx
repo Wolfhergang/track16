@@ -1,10 +1,20 @@
 'use client'
 
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { engine, STEPS } from './engine.js'
-import { load, patternHasData, reducer, save, trackPattern } from './model.js'
+import {
+  liveTrack,
+  load,
+  patternHasData,
+  reducer,
+  save,
+  sectionTracks,
+  trackPattern,
+} from './model.js'
 import Transport from './components/Transport.jsx'
+import SectionBar from './components/SectionBar.jsx'
 import TrackRow from './components/TrackRow.jsx'
+import StepGrid from './components/StepGrid.jsx'
 import StepEditor from './components/StepEditor.jsx'
 import Settings from './components/Settings.jsx'
 import InstallPrompt from './components/InstallPrompt.jsx'
@@ -28,19 +38,29 @@ const EDITS = new Set([
   'removeSlot',
   'addTrack',
   'removeTrack',
+  'copySection', // it overwrites a whole section — undo has to reach it
+  'clearAll', // ditto: one tap wipes every section
 ])
 
 export default function App() {
   const [state, rawDispatch] = useReducer(reducer, undefined, load)
   const [playing, setPlaying] = useState(false)
   const [recording, setRecording] = useState(false)
-  const [playhead, setPlayhead] = useState(-1)
   const [ports, setPorts] = useState({ inputs: [], outputs: [] })
   const [midiStatus, setMidiStatus] = useState('Requesting MIDI access…')
   const [showSettings, setShowSettings] = useState(false)
   const [songSlots, setSongSlots] = useState([]) // slot each track plays in song mode
+  const [pendingSection, setPendingSection] = useState(-1) // queued mid-pass
 
-  const track = state.tracks[state.selectedTrack]
+  // Track config is shared by every section; the patterns come from the one up.
+  const slotTracks = sectionTracks(state)
+  // Which sections hold anything — a scan of every slot of every track, so it
+  // is kept off the render path and only redone when the patterns change.
+  const filledSections = useMemo(
+    () => state.sections.map(sec => sec.tracks.some(t => t.slots.some(patternHasData))),
+    [state.sections],
+  )
+  const track = liveTrack(state, state.selectedTrack)
   const pattern = trackPattern(track)
   const stepData = pattern.steps[state.selectedStep]
 
@@ -82,23 +102,20 @@ export default function App() {
 
   useEffect(() => {
     engine.setState({
-      patterns: state.tracks.map(trackPattern),
-      slots: state.tracks.map(t => t.slots),
-      currents: state.tracks.map(t => t.currentSlot),
+      // the whole song, so the engine can swap sections on its own clock
+      sections: state.sections.map(sec => ({
+        slots: sec.tracks.map(t => t.slots),
+        currents: sec.tracks.map(t => t.currentSlot),
+      })),
+      section: state.section,
       tracks: state.tracks,
       bpm: state.bpm,
       swing: state.swing,
       song: state.song,
     })
-  }, [state.tracks, state.bpm, state.swing, state.song])
+  }, [state.sections, state.section, state.tracks, state.bpm, state.swing, state.song])
 
   useEffect(() => {
-    engine.onStep = (step, time) => {
-      if (step < 0) return setPlayhead(-1)
-      const delay = Math.max(0, time - performance.now())
-      // Steps are scheduled ahead of time; drop any that land after a stop.
-      setTimeout(() => setPlayhead(engine.playing ? step : -1), delay)
-    }
     engine.onPorts = setPorts
     engine.onError = setMidiStatus
     // Song mode drags the selection along with playback, so recording keeps
@@ -111,14 +128,23 @@ export default function App() {
         dispatch({ type: 'syncSlots', slots })
       }, delay)
     }
+    // A queued section has started sounding: move the UI onto it, so what you
+    // edit and record into is the part you are hearing.
+    engine.onSection = (index, time) => {
+      const delay = Math.max(0, time - performance.now())
+      setTimeout(() => {
+        setPendingSection(-1)
+        dispatch({ type: 'selectSection', index })
+      }, delay)
+    }
     engine.initMidi().then(access => {
       if (access) setMidiStatus('Web MIDI ready.')
     })
     return () => {
       engine.stop()
-      engine.onStep = null
       engine.onPorts = null
       engine.onSong = null
+      engine.onSection = null
     }
   }, [])
 
@@ -180,15 +206,22 @@ export default function App() {
     // `remember` tracks the key for sustain capture — only meaningful against a
     // running clock, so step record always writes single-step notes.
     // The first note of a gesture replaces what the step held unless that track
-    // is locked; the rest of a chord always piles onto that same step.
+    // is locked; the rest of a chord always piles onto that same step. A mono
+    // track keeps only that first note: the rest of the chord never lands.
     const write = (step, remember, sameStep) => {
+      const wrote = []
       for (const t of targets) {
-        const replace = !s.tracks[t].overdub && !sameStep
+        const cfg = s.tracks[t]
+        if (cfg.mono && sameStep) continue // the note that opened this step stands
+        const replace = cfg.mono || (!cfg.overdub && !sameStep)
         dispatch({ type: 'writeStep', track: t, step, note, velocity, len: 1, replace })
+        wrote.push(t)
       }
-      dispatch({ type: 'set', key: 'selectedTrack', value: targets[0] })
+      if (!wrote.length) return // every target is mono and already holds this step
+      dispatch({ type: 'set', key: 'selectedTrack', value: wrote[0] })
       dispatch({ type: 'set', key: 'selectedStep', value: step })
-      if (remember) holds.current.set(`${channel}:${note}`, { targets, step, time: now })
+      // only the tracks that took the note get its sustain when the key lifts
+      if (remember) holds.current.set(`${channel}:${note}`, { targets: wrote, step, time: now })
       chord.current = { time: now, step }
     }
 
@@ -240,7 +273,6 @@ export default function App() {
     engine.ensureAudio()
     engine.toggle()
     setPlaying(engine.playing)
-    if (!engine.playing) setPlayhead(-1)
   }, [])
 
   const toggleRec = () => {
@@ -275,8 +307,19 @@ export default function App() {
     dispatch({ type: 'selectSlot', track: trackIndex, slot })
   }
 
+  // Stopped, a section takes over at once; playing, the engine hands it the
+  // clock at the end of the pass and tells us through onSection.
+  const selectSection = index => {
+    if (engine.queueSection(index)) {
+      setPendingSection(-1)
+      dispatch({ type: 'selectSection', index })
+      return
+    }
+    setPendingSection(index === state.section ? -1 : index)
+  }
+
   const clearTrack = i => {
-    if (!patternHasData(trackPattern(state.tracks[i]))) return
+    if (!patternHasData(trackPattern(slotTracks[i]))) return
     dispatch({ type: 'clearTrack', track: i })
   }
 
@@ -304,9 +347,18 @@ export default function App() {
         onSwing={v => dispatch({ type: 'set', key: 'swing', value: v })}
         onUndo={undo}
         canUndo={canUndo}
+        onClearAll={() => dispatch({ type: 'clearAll' })}
         song={state.song}
         onSong={v => dispatch({ type: 'set', key: 'song', value: v })}
         onSettings={() => setShowSettings(true)}
+      />
+
+      <SectionBar
+        current={state.section}
+        pending={pendingSection}
+        filled={filledSections}
+        onSelect={selectSection}
+        onCopy={from => dispatch({ type: 'copySection', from })}
       />
 
       <main className="grid">
@@ -314,43 +366,43 @@ export default function App() {
           <TrackRow
             key={i}
             index={i}
-            config={cfg}
-            steps={trackPattern(cfg).steps}
+            config={{ ...cfg, ...slotTracks[i] }}
             selected={state.selectedTrack === i}
-            selectedStep={state.selectedStep}
-            cursor={stepMode ? state.cursor : -1}
-            playhead={playhead}
             midiLit={litChannel === cfg.channel}
             onSelectTrack={() => dispatch({ type: 'set', key: 'selectedTrack', value: i })}
-            onSelectStep={step => {
-              dispatch({ type: 'set', key: 'selectedTrack', value: i })
-              dispatch({ type: 'set', key: 'selectedStep', value: step })
-              dispatch({ type: 'set', key: 'cursor', value: step })
-              auditionStep(i, trackPattern(cfg).steps[step]) // hear what it holds
-            }}
             onMute={() => dispatch({ type: 'track', index: i, patch: { mute: !cfg.mute } })}
-            onOverdub={() =>
-              dispatch({ type: 'track', index: i, patch: { overdub: !cfg.overdub } })
-            }
             onClear={() => clearTrack(i)}
             onSelectSlot={slot => selectSlot(i, slot)}
             onAddSlot={() => dispatch({ type: 'addSlot', track: i })}
             onRemoveSlot={slot => dispatch({ type: 'removeSlot', track: i, slot })}
             songSlot={state.song && playing ? songSlots[i] : -1}
-            onResizeStep={(step, patch) => dispatch({ type: 'step', track: i, step, patch })}
-            onClearStepAt={step => dispatch({ type: 'clearStep', track: i, step })}
           />
         ))}
       </main>
+
+      <StepGrid
+        trackIndex={state.selectedTrack}
+        trackName={track.name}
+        steps={pattern.steps}
+        selectedStep={state.selectedStep}
+        cursor={stepMode ? state.cursor : -1}
+        playing={playing}
+        onSelectStep={step => {
+          dispatch({ type: 'set', key: 'selectedStep', value: step })
+          dispatch({ type: 'set', key: 'cursor', value: step })
+          auditionStep(state.selectedTrack, pattern.steps[step]) // hear what it holds
+        }}
+        onResizeStep={(step, patch) =>
+          dispatch({ type: 'step', track: state.selectedTrack, step, patch })
+        }
+        onClearStepAt={step => dispatch({ type: 'clearStep', track: state.selectedTrack, step })}
+      />
 
       <StepEditor
         trackName={track.name}
         color={state.selectedTrack}
         step={state.selectedStep}
         data={stepData}
-        stepMode={stepMode}
-        liveMode={recording && playing}
-        cursor={state.cursor}
         onRemoveNote={note =>
           dispatch({
             type: 'removeNote',
@@ -363,10 +415,6 @@ export default function App() {
           engine.audition(track.channel - 1, note, stepData.velocity, 200, state.selectedTrack)
         }
         onAudition={() => auditionStep(state.selectedTrack, stepData)}
-        onBack={() =>
-          dispatch({ type: 'set', key: 'cursor', value: (state.cursor + STEPS - 1) % STEPS })
-        }
-        onRest={() => dispatch({ type: 'set', key: 'cursor', value: (state.cursor + 1) % STEPS })}
       />
 
       {showSettings && (

@@ -63,32 +63,78 @@ button{font-family:inherit}
 .bar .tbtn.song{min-width:60px; font-size:12px; letter-spacing:.06em; margin-left:14px}
 .bar .tbtn.song.on{background:var(--rec); color:#fff; border-color:transparent}
 
-/* undo + settings sit together at the right end */
+/* undo + clear-all + settings sit together at the right end */
 .bar .tbtn.undo{margin-left:auto; font-size:19px}
 .bar .tbtn.small:last-child{margin-left:0}
-
-/* ---------- slots (one bank per track, inside the track panel) ---------- */
-.slots{display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px}
-.slot{
-  min-width:36px; min-height:32px; border-radius:7px; border:1px solid var(--line);
-  background:var(--panel2); color:var(--dim); font-size:12px; font-weight:700; padding:0 8px;
+.bar .tbtn.clear-all{font-size:13px; letter-spacing:.04em}
+/* first tap arms it, second wipes every section */
+.bar .tbtn.clear-all.armed{
+  background:var(--rec); color:#fff; border-color:transparent;
+  animation:blink 1s steps(2) infinite; font-size:11px;
 }
-.slot.add{color:var(--txt); border-style:dashed; font-size:16px}
+
+/* ---------- sections (A–D, the parts of the song) ---------- */
+.sections{
+  display:flex; gap:8px; padding:8px; flex:0 0 auto;
+  background:var(--panel); border-bottom:1px solid var(--line);
+}
+.section-cell{flex:1 1 0; display:flex; align-items:stretch; gap:4px; min-width:0}
+.section{
+  flex:1 1 auto; min-width:0; min-height:62px; border-radius:9px; border:1px solid var(--line);
+  background:var(--panel2); color:var(--dim); font-size:18px; font-weight:800;
+  letter-spacing:.06em;
+}
+/* ▸ hands this section's whole bank to the next one; over patterns it arms
+   first, so the overwrite always takes two taps */
+/* white-on-black like the transport buttons */
+.section-copy{
+  flex:0 0 auto; width:50px; border-radius:8px; border:1px solid #ffffff33;
+  background:#eef1f8; color:#0e0f13; font-size:18px; line-height:1; padding:0;
+}
+.section-copy:active{background:#c3c9dc}
+.section-copy:disabled{opacity:.4}
+.section-copy.armed{
+  background:var(--rec); color:#fff; border-color:transparent;
+  animation:blink 1s steps(2) infinite;
+}
+.section.has{color:var(--txt); border-color:#3d4460}
+.section.sel{background:var(--acc); color:#08130e; border-color:transparent}
+/* tapped mid-pass: it starts when the pass being heard ends */
+.section.queued{
+  border-color:var(--rec); color:var(--rec); animation:blink 1s steps(2) infinite;
+}
+
+/* ---------- slots (one bank per track, in that track's header row) ---------- */
+/* sits between the MIDI-in light and the track buttons; wraps to a second line
+   rather than squeezing the pads out of the row */
+.slots{display:flex; flex-wrap:wrap; gap:8px; margin-left:6px}
+.slot{
+  min-width:48px; min-height:44px; border-radius:9px; border:1px solid var(--line);
+  background:var(--panel2); color:var(--dim); font-size:14px; font-weight:700; padding:0 11px;
+}
+.slot.add{color:var(--txt); border-style:dashed; font-size:20px}
 /* the slot this track is playing right now in song mode */
 .slot.playing{box-shadow:0 0 0 2px var(--rec)}
 .slot.has{color:var(--txt); border-color:#3d4460}
 .slot.sel{background:var(--tc); color:#08130e; border-color:transparent}
 
 /* ---------- tracks ---------- */
-/* Tracks share whatever height is left over: each row grows, its pads take the
-   slack, and the rack only scrolls once rows hit their minimum. */
-.grid{flex:1 1 auto; overflow-y:auto; padding:6px 8px 4px; display:flex; flex-direction:column; gap:6px}
+/* Each track is one header row — name, slots, switches. The pads are the single
+   StepGrid below the rack, which follows the selected track. */
+/* the rack is only as tall as its headers — it scrolls instead of growing, so
+   the pads below it take the leftover height */
+.grid{flex:0 1 auto; min-height:0; overflow-y:auto; padding:6px 8px 4px;
+  display:flex; flex-direction:column; gap:6px}
+/* the panel carries a wash of the track's own colour, so a row reads as its
+   track at a glance — light enough to lift off the background, dark enough to
+   keep the white label text legible */
 .track{
-  background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:6px;
-  display:flex; flex-direction:column; flex:1 1 0; min-height:127px;
+  background:color-mix(in srgb, var(--tc) 14%, var(--panel));
+  border:1px solid var(--line); border-radius:12px; padding:10px;
+  display:flex; flex-direction:column; flex:0 0 auto;
 }
-.track.sel{border-color:var(--tc)}
-.t-head{display:flex; align-items:center; gap:6px; margin-bottom:5px; min-height:30px}
+.track.sel{background:color-mix(in srgb, var(--tc) 22%, var(--panel)); border-color:var(--tc)}
+.t-head{display:flex; align-items:center; gap:6px; min-height:48px}
 .t-dot{width:10px; height:10px; border-radius:50%; background:var(--tc); flex:0 0 auto; display:inline-block}
 .t-name{font-size:12px; font-weight:700; letter-spacing:.04em}
 .t-ch{font-size:10px; color:var(--dim)}
@@ -99,33 +145,50 @@ button{font-family:inherit}
   transition:background .12s linear, box-shadow .12s linear;
 }
 .t-in.on{background:var(--tc); border-color:transparent; box-shadow:0 0 6px var(--tc)}
-.t-btns{margin-left:auto; display:flex; gap:14px}
+.t-btns{margin-left:auto; display:flex; gap:22px}
+/* tell-tale at the far right: MONO keeps one note per step, POLY a chord */
+.t-mono{
+  margin-left:10px; flex:0 0 auto; padding:4px 7px; border-radius:6px;
+  border:1px solid var(--tc); color:var(--tc);
+  font-size:9px; font-weight:800; letter-spacing:.08em; line-height:1;
+}
+/* poly is the default — stated, but not shouted */
+.t-mono.poly{border-color:var(--line); color:var(--dim)}
 .t-btns button{
-  min-width:46px; min-height:36px; font-size:12px; font-weight:700; border-radius:8px;
+  min-width:56px; min-height:46px; font-size:13px; font-weight:700; border-radius:9px;
   border:1px solid var(--line); background:var(--panel2); color:var(--dim);
 }
 .t-btns button.mute.on{background:var(--rec); color:#fff; border-color:transparent}
-.t-btns button.clear{font-size:11px; letter-spacing:.04em}
-/* locked: recorded notes add to the step instead of replacing it */
-.t-btns button.lock{font-size:14px; line-height:1}
-.t-btns button.lock.on{background:var(--tc); border-color:transparent}
+.t-btns button.clear{font-size:12px; letter-spacing:.04em}
 /* first tap arms it, second clears */
 .t-btns button.clear.armed{
   background:var(--rec); color:#fff; border-color:transparent; animation:blink 1s steps(2) infinite;
 }
 
-/* minmax(0,1fr) + min-width:0 stop the pads' intrinsic min-size from
-   overflowing the row on narrow phones */
+/* ---------- step grid (one rack-wide pad set for the selected track) ---------- */
+.stepgrid{
+  background:var(--panel); border:1px solid var(--line); border-radius:12px;
+  margin:0 8px; padding:6px; flex:1 1 auto; min-height:120px;
+  display:flex; flex-direction:column;
+  container-type:size; /* 100cqh below is this panel's inner height */
+}
+/* Two rows of 8: steps 1–8 on top, 9–16 below. The pads are square, so the
+   grid's width is capped at whatever fits in the panel's height below the top
+   margin — 8 pads of (that height − gap) / 2 — and centred horizontally. */
 .steps{
-  display:grid; grid-template-columns:repeat(16,minmax(0,1fr)); gap:2px;
-  flex:1 1 auto; min-height:0;
+  --gap:2px; --top:2em;
+  display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:var(--gap);
+  width:100%; max-width:calc((100cqh - var(--top) - var(--gap)) * 4 + var(--gap) * 7);
+  margin:var(--top) auto auto; align-content:start;
 }
 .step{
-  position:relative; min-width:0; min-height:34px; border-radius:5px; overflow:hidden;
+  position:relative; min-width:0; aspect-ratio:1; border-radius:5px; overflow:hidden;
   background:var(--pad); border:1px solid #00000055; padding:0; touch-action:none;
 }
 .step:nth-child(4n+1){background:var(--pad-alt)}
-.step.sel{border-color:#fff9}
+/* inset ring instead of a fatter border — the pad keeps its size, the outline
+   just reads thicker */
+.step.sel{border-color:#fff9; box-shadow:inset 0 0 0 2px #fff9}
 .step.cursor::after{content:""; position:absolute; inset:-2px; border:2px solid var(--rec); border-radius:8px}
 .step.playhead{outline:3px solid var(--rec); outline-offset:-2px; box-shadow:0 0 8px var(--rec)}
 /* the block: width is gate (200% fills the pad), height is velocity. Drag to resize. */
@@ -143,32 +206,34 @@ button{font-family:inherit}
 /* ---------- step editor ---------- */
 .editor{
   background:var(--panel); border:1px solid var(--line); border-radius:12px;
-  margin:6px 8px 8px; padding:8px; flex:0 0 auto;
+  margin:6px 8px 8px; padding:8px 8px 6px; flex:0 0 auto;
 }
-.ed-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px}
+/* what step this is | its notes | what you can do to it */
+.ed-head{display:grid; grid-template-columns:1fr 2fr 1fr; align-items:center; gap:8px}
+.ed-info{display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; min-width:0}
+.ed-right{display:flex; align-items:center; justify-content:flex-end; gap:8px; min-width:0}
 .ed-head #ed-title{font-size:11px; font-weight:700; color:var(--dim); letter-spacing:.06em;
   display:flex; align-items:center; gap:6px}
 /* read-only step values — velocity and gate are dragged on the pad itself */
 .ed-vals{
-  margin-right:auto; font-size:11px; font-weight:700; white-space:nowrap;
+  font-size:11px; font-weight:700; white-space:nowrap;
   color:var(--dim); letter-spacing:.04em; font-variant-numeric:tabular-nums;
 }
-.ed-actions{display:flex; gap:6px; margin-top:8px}
-.ed-actions.inline{margin:0}
+/* audition: the editor's one button, so it gets a proper target */
+.tbtn.audition{min-width:58px; min-height:46px; font-size:22px; border-radius:10px}
 .hint{font-size:11px; color:var(--dim)}
-.hint.rec{color:var(--rec); font-weight:700; white-space:nowrap}
 
-/* chord chips: every note held by the selected step */
-.chord{display:flex; flex-wrap:wrap; align-items:center; gap:5px; margin-bottom:6px; min-height:34px}
+/* chord chips: every note held by the selected step — the wide middle column */
+.chord{display:flex; flex-wrap:wrap; align-items:center; gap:9px; min-height:38px; min-width:0}
 .chord-empty{font-size:11px; color:var(--dim)}
 /* one tap picks the note, two remove it */
 .chip{
-  display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:8px;
-  background:var(--panel2); color:var(--txt); font-weight:700; font-size:12px;
-  min-height:32px; padding:0 10px;
+  display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:9px;
+  background:var(--panel2); color:var(--txt); font-weight:700; font-size:14px;
+  min-height:38px; padding:0 13px;
 }
 .chip.sel{border-color:var(--tc); color:var(--tc)}
-.chip-len{font-style:normal; font-size:10px; color:var(--dim); margin-left:3px}
+.chip-len{font-style:normal; font-size:11px; color:var(--dim); margin-left:4px}
 
 /* ---------- settings dialog ---------- */
 dialog{
@@ -185,7 +250,23 @@ dialog h3{margin:14px 0 6px; font-size:11px; color:var(--dim); letter-spacing:.0
 .s-row input[type=checkbox]{width:22px; height:22px; accent-color:var(--acc)}
 .s-actions{display:flex; gap:6px; flex-wrap:wrap}
 .track-cfg{display:flex; flex-direction:column; gap:6px}
-.tc-row{display:grid; grid-template-columns:12px 1fr 84px 46px; align-items:center; gap:8px}
+.tc-row{
+  display:grid; grid-template-columns:12px 1fr 44px 52px 84px 46px;
+  align-items:center; gap:8px;
+}
+/* mono: a step keeps one note, the first one played */
+.tc-mono{
+  min-height:36px; width:100%; border-radius:8px; border:1px solid var(--line);
+  background:var(--panel2); color:var(--dim); font-size:9px; font-weight:800;
+  letter-spacing:.06em; padding:0;
+}
+.tc-mono.on{background:var(--acc); color:#08130e; border-color:transparent}
+/* locked: recording adds to a step instead of replacing it */
+.tc-lock{
+  min-height:36px; width:100%; border-radius:8px; border:1px solid var(--line);
+  background:var(--panel2); color:var(--txt); font-size:16px; line-height:1; padding:0;
+}
+.tc-lock.on{background:var(--acc); border-color:transparent}
 .tc-row input,.tc-row select{
   background:var(--panel2); color:var(--txt); border:1px solid var(--line);
   border-radius:8px; padding:8px; font-size:13px; width:100%;
@@ -221,5 +302,4 @@ dialog .tbtn.primary{margin-top:12px; width:100%}
   .bar .tbtn.undo{font-size:17px}
   .tempo input{width:40px; font-size:15px; padding:8px 2px}
 }
-@media (min-width:520px){ .steps{gap:3px} .step{border-radius:6px} }
-@media (min-width:700px){ #root{max-width:900px; margin:0 auto} }
+@media (min-width:520px){ .steps{--gap:3px} .step{border-radius:6px} }

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { BPM_MAX, BPM_MIN } from '../model.js'
 
 const TAP_RESET_MS = 2000 // gap that starts a fresh tap series
 const TAP_WINDOW = 5 // taps averaged
-const BPM_MIN = 20
-const BPM_MAX = 300
+const ARM_MS = 700 // window for the second tap that actually clears
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n))
 
@@ -102,10 +102,29 @@ export default function Transport({
   onSwing,
   onUndo,
   canUndo,
+  onClearAll,
   song,
   onSong,
   onSettings,
 }) {
+  // Wiping the song takes two taps: the first arms the button, a second one
+  // inside ARM_MS goes through with it.
+  const [armed, setArmed] = useState(false)
+  const armTimer = useRef(null)
+
+  useEffect(() => () => clearTimeout(armTimer.current), [])
+
+  const clearAll = () => {
+    clearTimeout(armTimer.current)
+    if (armed) {
+      setArmed(false)
+      onClearAll()
+      return
+    }
+    setArmed(true)
+    armTimer.current = setTimeout(() => setArmed(false), ARM_MS)
+  }
+
   const taps = useRef([])
   const [count, setCount] = useState(0)
   const idle = useRef(null)
@@ -192,6 +211,19 @@ export default function Transport({
         title="Undo"
       >
         ↶
+      </button>
+
+      <button
+        className={'tbtn small clear-all' + (armed ? ' armed' : '')}
+        onClick={clearAll}
+        title="Clear every section"
+        aria-label={
+          armed
+            ? 'Tap again to clear every section'
+            : 'Clear every section — tap twice'
+        }
+      >
+        {armed ? 'SURE?' : 'CLR'}
       </button>
 
       <button className="tbtn small" onClick={onSettings} aria-label="Settings">

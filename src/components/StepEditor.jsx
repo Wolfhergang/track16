@@ -8,14 +8,9 @@ export default function StepEditor({
   color,
   step,
   data,
-  stepMode,
-  liveMode,
-  cursor,
   onRemoveNote,
   onAudition,
   onAuditionNote,
-  onBack,
-  onRest,
 }) {
   // Which note of the chord is picked — it is the one a chip highlights.
   const pitches = data.notes.map(n => n.note)
@@ -39,29 +34,39 @@ export default function StepEditor({
     onAuditionNote(note)
   }
 
-  const mode = stepMode ? `step rec → ${cursor + 1}` : liveMode ? 'live rec' : ''
-
   return (
     <section className="editor" style={{ '--tc': TRACK_COLORS[color] }}>
+      {/* three columns: what step this is | its notes | what you can do to it */}
       <div className="ed-head">
-        <span id="ed-title">
-          <span className="t-dot" /> {trackName} · STEP {step + 1} ·{' '}
-          {empty ? 'REST' : `${data.notes.length} note${data.notes.length > 1 ? 's' : ''}`}
-        </span>
-        {/* read-only: velocity and gate are set by dragging the pad's block */}
-        <span className="ed-vals">
-          VEL {data.velocity} · GATE {data.gate}%
-        </span>
-        {mode && <span className="hint rec">{mode}</span>}
-        <div className="ed-actions inline">
-          <button className="tbtn small" onClick={onBack} title="Step back" disabled={!stepMode}>
-            ◀
-          </button>
-          <button className="tbtn small" onClick={onRest} title="Rest" disabled={!stepMode}>
-            REST
-          </button>
+        <div className="ed-info">
+          {/* the chips in the middle column already say what the step holds */}
+          <span id="ed-title">
+            <span className="t-dot" /> {trackName} · STEP {step + 1}
+          </span>
+          {/* read-only: velocity and gate are set by dragging the pad's block */}
+          <span className="ed-vals">
+            VEL {data.velocity} · GATE {data.gate}%
+          </span>
+        </div>
+
+        <div className="chord" aria-label="Notes in this step">
+          {empty && <span className="chord-empty">no notes — this step is silent</span>}
+          {data.notes.map(n => (
+            <button
+              key={n.note}
+              className={'chip' + (n.note === active ? ' sel' : '')}
+              onClick={() => tapNote(n.note)}
+              aria-label={`${noteName(n.note)} — double tap to remove`}
+            >
+              {noteName(n.note)}
+              {n.len > 1 && <i className="chip-len">×{n.len}</i>}
+            </button>
+          ))}
+        </div>
+
+        <div className="ed-right">
           <button
-            className="tbtn small"
+            className="tbtn audition"
             onClick={onAudition}
             disabled={empty}
             aria-label="Audition step"
@@ -69,21 +74,6 @@ export default function StepEditor({
             ♪
           </button>
         </div>
-      </div>
-
-      <div className="chord" aria-label="Notes in this step">
-        {empty && <span className="chord-empty">no notes — this step is silent</span>}
-        {data.notes.map(n => (
-          <button
-            key={n.note}
-            className={'chip' + (n.note === active ? ' sel' : '')}
-            onClick={() => tapNote(n.note)}
-            aria-label={`${noteName(n.note)} — double tap to remove`}
-          >
-            {noteName(n.note)}
-            {n.len > 1 && <i className="chip-len">×{n.len}</i>}
-          </button>
-        ))}
       </div>
     </section>
   )

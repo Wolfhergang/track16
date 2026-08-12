@@ -8,6 +8,7 @@ export const SLOTS = 10 // ceiling: a track holds 1..SLOTS memory slots
 const LOOKAHEAD_MS = 100 // how far ahead events are scheduled
 const TICK_MS = 25 // how often the scheduler wakes up
 const PPQN = 24 // MIDI clock pulses per quarter note
+const TIMELINE_MAX = 64 // scheduled steps remembered for the playhead
 
 const NOTE_ON = 0x90
 const NOTE_OFF = 0x80
@@ -18,9 +19,12 @@ const CC = 0xb0
 
 class Engine {
   constructor() {
-    this.patterns = null // [{ steps: [...] }] — one live pattern per track
-    this.slots = null // [[{ steps }, ...], ...] — every slot of every track
-    this.currents = [] // each track's selected slot
+    // [{ slots: [[{steps}, ...] per track], currents: [slot per track] }] — the
+    // whole song. The engine picks the pattern to play out of here itself, so a
+    // section switch lands on the next pass without waiting for a re-render.
+    this.sections = null
+    this.section = 0 // section sounding right now
+    this.pending = null // section queued mid-pass, applied at the next pass
     this.song = false // song mode: advance one slot per pass, per track
     this.songSlot = [] // slot each track is playing right now
     this.barStarted = false
@@ -32,6 +36,10 @@ class Engine {
     this.step = 0
     this.nextStepTime = 0
     this.timer = null
+    // [{ step, time }] for the steps scheduled so far, oldest first. Steps are
+    // scheduled ahead of when they sound, so this is what lets the UI ask which
+    // step is being heard *right now* instead of being pushed one timer per step.
+    this.timeline = []
 
     this.access = null
     this.out = null
@@ -42,8 +50,8 @@ class Engine {
     this.clockOut = false
 
     this.active = new Set() // "ch:note" currently sounding
-    this.onStep = null // (step, timeMs) => void
     this.onSong = null // (slotPerTrack) => void, fired when song mode advances
+    this.onSection = null // (index, timeMs) => void, fired when a queued section starts
     this.onMidiIn = null // ({ note, velocity, channel }) => void
     this.onPorts = null // ({ inputs, outputs }) => void
     this.onError = null // (message) => void
@@ -53,33 +61,69 @@ class Engine {
 
   // React pushes the current pattern/config here on every change so that edits
   // made while the sequence runs take effect on the very next step.
-  setState({ patterns, slots, currents, tracks, bpm, swing, song }) {
-    if (patterns) this.patterns = patterns
-    if (slots) this.slots = slots
-    if (currents) {
-      this.currents = currents
-      // While stopped, the song follows what the user selects; while playing,
-      // the engine's own position stays authoritative.
-      if (!this.playing) this.songSlot = currents.slice()
-    }
+  setState({ sections, section, tracks, bpm, swing, song }) {
+    if (sections) this.sections = sections
+    // While stopped, the engine follows what the user selects; while playing,
+    // its own position stays authoritative — see queueSection.
+    if (section != null && !this.playing) this.section = section
+    if (sections && !this.playing) this.songSlot = this.currents().slice()
     if (tracks) this.tracks = tracks
     if (bpm) this.bpm = bpm
     if (swing != null) this.swing = swing
     if (song != null) this.song = song
   }
 
+  get bank() {
+    return this.sections?.[this.section] || null
+  }
+
+  currents() {
+    return this.bank?.currents || []
+  }
+
   // The pattern a track is actually playing this pass.
   patternFor(ti) {
-    if (!this.song) return this.patterns?.[ti]
-    const bank = this.slots?.[ti]
-    if (!bank?.length) return this.patterns?.[ti]
-    return bank[(this.songSlot[ti] ?? 0) % bank.length]
+    const bank = this.bank?.slots?.[ti]
+    if (!bank?.length) return null
+    const slot = this.song ? (this.songSlot[ti] ?? 0) : (this.currents()[ti] ?? 0)
+    return bank[slot % bank.length]
+  }
+
+  /* ---------------- sections ---------------- */
+
+  // Tapping a section while stopped switches at once; while playing it is
+  // queued, so the pass you are hearing finishes before the new part starts.
+  // Returns true when it took effect immediately.
+  queueSection(index) {
+    if (!this.sections?.[index]) return false
+    if (!this.playing) {
+      this.enterSection(index)
+      return true
+    }
+    this.pending = index === this.section ? null : index
+    return false
+  }
+
+  // A section always opens on slot 1 of every track. React resets the same
+  // pointers, but the first steps of the new pass are scheduled before that
+  // re-render lands — so the engine's own copy is zeroed here too.
+  enterSection(index) {
+    this.section = index
+    this.pending = null
+    const bank = this.sections?.[index]
+    if (bank) bank.currents = (bank.slots || []).map(() => 0)
+    this.songSlot = this.currents().slice()
+  }
+
+  applySection(index, time) {
+    this.enterSection(index)
+    this.onSection?.(index, time)
   }
 
   // `time` is when the new pass is heard — steps are scheduled ahead of it, so
   // the UI is told to follow at that moment, not at scheduling time.
   advanceSong(time) {
-    this.songSlot = (this.slots || []).map((bank, ti) => {
+    this.songSlot = (this.bank?.slots || []).map((bank, ti) => {
       const len = bank?.length || 1
       return ((this.songSlot[ti] ?? 0) + 1) % len
     })
@@ -197,8 +241,10 @@ class Engine {
     this.ensureAudio()
     this.playing = true
     this.step = 0
-    this.songSlot = this.currents.slice() // a song always starts where you are
+    this.songSlot = this.currents().slice() // a song always starts where you are
+    this.pending = null
     this.barStarted = false
+    this.timeline = []
     this.onSong?.(this.songSlot.slice(), performance.now())
     this.nextStepTime = performance.now() + 60
     if (this.clockOut) this.send([START], this.nextStepTime)
@@ -209,11 +255,12 @@ class Engine {
   stop() {
     if (!this.playing) return
     this.playing = false
+    this.pending = null // a queued section never survives a stop
     clearInterval(this.timer)
     this.timer = null
+    this.timeline = []
     if (this.clockOut) this.send([STOP])
     this.allNotesOff()
-    this.onStep?.(-1, performance.now())
   }
 
   toggle() {
@@ -227,6 +274,23 @@ class Engine {
     }
     this.active.clear()
     for (let ch = 0; ch < 16; ch++) this.send([CC | ch, 123, 0]) // all notes off
+  }
+
+  // The step sounding at `now`, swing included — the UI polls this once per
+  // animation frame rather than being handed one timer per step, so the
+  // indicator lands with the note and self-corrects after a stall.
+  playheadAt(now = performance.now()) {
+    if (!this.playing) return -1
+    let current = -1
+    let stale = 0
+    for (const e of this.timeline) {
+      if (e.time > now) break
+      current = e.step
+      stale++
+    }
+    // keep one played entry as the floor, drop the rest
+    if (stale > 1) this.timeline.splice(0, stale - 1)
+    return current
   }
 
   // Nearest step to "now" — used to quantize live recording.
@@ -245,12 +309,20 @@ class Engine {
       // Song mode moves every track to its next slot at the top of each pass,
       // before that pass is scheduled — tracks with different slot counts drift
       // against each other on purpose.
+      // A queued section takes over at the top of a pass, before that pass is
+      // scheduled — and it starts on its own slots rather than advancing them.
       if (this.step === 0) {
-        if (this.barStarted && this.song) this.advanceSong(this.nextStepTime)
+        if (this.pending != null) this.applySection(this.pending, this.nextStepTime)
+        else if (this.barStarted && this.song) this.advanceSong(this.nextStepTime)
         this.barStarted = true
       }
       this.scheduleStep(this.step, this.nextStepTime)
-      this.onStep?.(this.step, this.nextStepTime)
+      // logged at the time it is actually heard, swing and all. The UI prunes
+      // as it reads, but nothing reads while the tab is hidden — hence the cap.
+      this.timeline.push({ step: this.step, time: this.nextStepTime + this.swingOffset(this.step) })
+      if (this.timeline.length > TIMELINE_MAX) {
+        this.timeline.splice(0, this.timeline.length - TIMELINE_MAX)
+      }
       this.nextStepTime += this.stepDur
       this.step = (this.step + 1) % STEPS
     }
@@ -261,7 +333,7 @@ class Engine {
       const per = this.stepDur / (PPQN / 4)
       for (let i = 0; i < PPQN / 4; i++) this.send([CLOCK], baseTime + i * per)
     }
-    if (!this.patterns || !this.tracks) return
+    if (!this.sections || !this.tracks) return
 
     const time = baseTime + this.swingOffset(step)
     this.tracks.forEach((cfg, ti) => {

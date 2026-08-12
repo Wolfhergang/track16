@@ -124,6 +124,34 @@ export default function Settings({ state, ports, midiStatus, onClose, onTrack, o
               onChange={e => onTrack(i, { name: e.target.value })}
               aria-label={`Track ${i + 1} name`}
             />
+            {/* locked: recording adds to a step instead of replacing it */}
+            <button
+              className={'tc-lock' + (t.overdub ? ' on' : '')}
+              onClick={() => onTrack(i, { overdub: !t.overdub })}
+              aria-pressed={!!t.overdub}
+              aria-label={
+                t.overdub
+                  ? `${t.name}: recording adds to existing notes`
+                  : `${t.name}: recording replaces the step`
+              }
+              title="Lock notes: recording adds instead of replacing"
+            >
+              {t.overdub ? '🔒' : '🔓'}
+            </button>
+            {/* mono: a step keeps one note, the first one played */}
+            <button
+              className={'tc-mono' + (t.mono ? ' on' : '')}
+              onClick={() => onTrack(i, { mono: !t.mono })}
+              aria-pressed={!!t.mono}
+              aria-label={
+                t.mono
+                  ? `${t.name}: monophonic, one note per step`
+                  : `${t.name}: records chords`
+              }
+              title="Monophonic: only the first note played lands on a step"
+            >
+              MONO
+            </button>
             <select
               value={t.channel}
               onChange={e => onTrack(i, { channel: +e.target.value })}
@@ -162,6 +190,11 @@ export default function Settings({ state, ports, midiStatus, onClose, onTrack, o
       <p className="hint">
         Each track owns its own slots (1–10): `+` adds one, a double tap deletes one, `CLR` clears
         the current one. SONG mode cycles every track through its slots, one per pass.
+      </p>
+      <p className="hint">
+        Sections A–D are the parts of the song. Every section has these same tracks with its own
+        slots, so switching one swaps the whole rack. Tapped while playing, a section waits for the
+        pass being heard to finish before it takes over.
       </p>
       <p className="hint">
         Notes come from an external MIDI controller — pick a MIDI in above. They record into the

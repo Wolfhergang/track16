@@ -31,7 +31,7 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      {/* styles.css sizes and centres #root — keep the id the CSS expects. */}
+      {/* styles.css sizes #root — keep the id the CSS expects. */}
       <body>
         <div id="root">{children}</div>
       </body>

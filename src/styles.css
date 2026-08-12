@@ -12,9 +12,11 @@ body{
   font:500 14px/1.3 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   overscroll-behavior:none; touch-action:manipulation; user-select:none;
 }
+/* 5em of clear space above the transport, on top of whatever the notch takes.
+   It is padding, not margin: box-sizing keeps the app inside the viewport. */
 #root{
   display:flex; flex-direction:column; overflow:hidden;
-  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  padding:calc(5em + env(safe-area-inset-top)) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 button{font-family:inherit}
 
@@ -41,16 +43,21 @@ button{font-family:inherit}
 .bpm-field{display:flex; align-items:flex-end; gap:4px}
 
 /* the transport row gets bigger touch targets than the in-panel buttons */
-.bar .tbtn{min-width:54px; min-height:54px; font-size:19px; border-radius:12px}
-.bar .tbtn.small{min-width:46px; min-height:46px; font-size:15px}
-.bar .tbtn.tap{min-width:64px; font-size:13px; letter-spacing:.06em}
-.bar .tbtn.nudge{min-width:38px; min-height:46px; font-size:12px; padding:0}
+.bar .tbtn{min-width:74px; min-height:54px; font-size:19px; border-radius:12px}
+.bar .tbtn.small{min-width:62px; min-height:46px; font-size:15px}
+.bar .tbtn.tap{min-width:84px; font-size:13px; letter-spacing:.06em}
+.bar .tbtn.nudge{min-width:58px; min-height:56px; font-size:17px; padding:0}
 .tempo{display:flex; flex-direction:column; align-items:center; gap:2px}
-.tempo label{font-size:9px; color:var(--dim); letter-spacing:.08em}
+.tempo label,.tempo-label{font-size:9px; color:var(--dim); letter-spacing:.08em}
 .tempo input{
   width:62px; background:var(--panel2); border:1px solid var(--line); color:var(--txt);
   border-radius:8px; padding:10px 2px; text-align:center; font-size:17px; font-weight:700;
   font-variant-numeric:tabular-nums;
+}
+/* BPM is read-out only — the ▲▼ nudges and TAP set it */
+.tempo-val{
+  width:62px; padding:10px 2px; text-align:center; font-size:17px; font-weight:700;
+  color:var(--txt); font-variant-numeric:tabular-nums; line-height:1.1;
 }
 /* top-bar buttons are white-on-black for contrast; lit states keep their color */
 .bar .tbtn{background:#eef1f8; color:#0e0f13; border-color:#ffffff33}
@@ -60,13 +67,15 @@ button{font-family:inherit}
 .bar .tbtn.rec.on{background:var(--rec); color:#fff}
 .bar .tbtn.tap.on{background:var(--acc); color:#08130e; border-color:transparent}
 /* SONG starts the group after the transport — extra space sets it off */
-.bar .tbtn.song{min-width:60px; font-size:12px; letter-spacing:.06em; margin-left:14px}
+.bar .tbtn.song{min-width:80px; font-size:12px; letter-spacing:.06em; margin-left:14px}
 .bar .tbtn.song.on{background:var(--rec); color:#fff; border-color:transparent}
 
 /* undo + clear-all + settings sit together at the right end */
-.bar .tbtn.undo{margin-left:auto; font-size:19px}
+.bar .tbtn.undo{margin-left:auto; font-size:26px; line-height:1}
 .bar .tbtn.small:last-child{margin-left:0}
-.bar .tbtn.clear-all{font-size:13px; letter-spacing:.04em}
+/* the gear */
+.bar .tbtn.settings{font-size:26px; line-height:1}
+.bar .tbtn.clear-all{font-size:19px; line-height:1}
 /* first tap arms it, second wipes every section */
 .bar .tbtn.clear-all.armed{
   background:var(--rec); color:#fff; border-color:transparent;
@@ -89,7 +98,7 @@ button{font-family:inherit}
 /* white-on-black like the transport buttons */
 .section-copy{
   flex:0 0 auto; width:50px; border-radius:8px; border:1px solid #ffffff33;
-  background:#eef1f8; color:#0e0f13; font-size:18px; line-height:1; padding:0;
+  background:#eef1f8; color:#0e0f13; font-size:36px; line-height:1; padding:0;
 }
 .section-copy:active{background:#c3c9dc}
 .section-copy:disabled{opacity:.4}
@@ -159,10 +168,12 @@ button{font-family:inherit}
   border:1px solid var(--line); background:var(--panel2); color:var(--dim);
 }
 .t-btns button.mute.on{background:var(--rec); color:#fff; border-color:transparent}
-.t-btns button.clear{font-size:12px; letter-spacing:.04em}
-/* first tap arms it, second clears */
+.t-btns button.clear{font-size:17px; line-height:1}
+/* first tap arms it, second clears — armed it goes back to words, since a
+   confirmation should not be a glyph */
 .t-btns button.clear.armed{
-  background:var(--rec); color:#fff; border-color:transparent; animation:blink 1s steps(2) infinite;
+  background:var(--rec); color:#fff; border-color:transparent;
+  animation:blink 1s steps(2) infinite; font-size:11px; letter-spacing:.04em;
 }
 
 /* ---------- step grid (one rack-wide pad set for the selected track) ---------- */
@@ -298,8 +309,8 @@ dialog .tbtn.primary{margin-top:12px; width:100%}
   .bar .tbtn.small{min-width:42px; min-height:42px; font-size:14px}
   .bar .tbtn.song{min-width:52px; font-size:11px; margin-left:8px}
   .bar .tbtn.tap{min-width:44px; font-size:11px; margin-left:0}
-  .bar .tbtn.nudge{min-width:28px; min-height:42px}
-  .bar .tbtn.undo{font-size:17px}
-  .tempo input{width:40px; font-size:15px; padding:8px 2px}
+  .bar .tbtn.nudge{min-width:40px; min-height:48px; font-size:14px}
+  .bar .tbtn.undo,.bar .tbtn.settings{font-size:22px}
+  .tempo input,.tempo-val{width:40px; font-size:15px; padding:8px 2px}
 }
 @media (min-width:520px){ .steps{--gap:3px} .step{border-radius:6px} }

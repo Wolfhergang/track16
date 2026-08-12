@@ -118,6 +118,18 @@ class Engine {
   applySection(index, time) {
     this.enterSection(index)
     this.onSection?.(index, time)
+    // the slot pointers moved with the section — tell the UI, or its "playing"
+    // marker keeps pointing at the slot the previous section was on
+    this.onSong?.(this.songSlot.slice(), time)
+  }
+
+  // Rewind every track in the section that is up to its first slot. Called just
+  // before the clock starts, never while it runs — song mode owns the slot
+  // pointers from then on.
+  rewindSlots() {
+    const bank = this.bank
+    if (bank) bank.currents = (bank.slots || []).map(() => 0)
+    this.songSlot = this.currents().slice()
   }
 
   // `time` is when the new pass is heard — steps are scheduled ahead of it, so

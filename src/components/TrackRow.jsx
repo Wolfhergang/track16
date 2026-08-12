@@ -74,7 +74,7 @@ export default function TrackRow({
                 : `Clear ${config.name} slot ${config.currentSlot + 1} — tap twice`
             }
           >
-            {armed ? 'SURE?' : 'CLR'}
+            {armed ? 'SURE?' : '🗑'}
           </button>
           <button
             className={'mute' + (config.mute ? ' on' : '')}

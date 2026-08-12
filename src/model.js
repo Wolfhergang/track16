@@ -309,6 +309,11 @@ export function reducer(state, action) {
     case 'selectSlot':
       return patchSlots(state, a.track, { currentSlot: a.slot })
 
+    // Back to slot 1 on every track of the section that is up — what pressing
+    // play does, so a run always begins from the same place.
+    case 'rewindSlots':
+      return mapSection(state, tracks => tracks.map(t => ({ ...t, currentSlot: 0 })))
+
     // Song mode moved on: point every track at the slot now sounding, so what
     // you edit and record into is what you hear.
     case 'syncSlots':

@@ -197,7 +197,13 @@ export default function Transport({
 
       <div className="bpm-field">
         <Nudge dir={-1} label="Tempo down" onStep={nudgeBpm} />
-        <NumField id="bpm" label="BPM" value={bpm} min={BPM_MIN} max={BPM_MAX} onCommit={onBpm} />
+        {/* read-only: tempo is set by the nudges and TAP */}
+        <div className="tempo">
+          <span className="tempo-label">BPM</span>
+          <output className="tempo-val" aria-label={`Tempo ${bpm} BPM`}>
+            {bpm}
+          </output>
+        </div>
         <Nudge dir={1} label="Tempo up" onStep={nudgeBpm} />
       </div>
 
@@ -223,10 +229,10 @@ export default function Transport({
             : 'Clear every section — tap twice'
         }
       >
-        {armed ? 'SURE?' : 'CLR'}
+        {armed ? 'SURE?' : '🗑'}
       </button>
 
-      <button className="tbtn small" onClick={onSettings} aria-label="Settings">
+      <button className="tbtn small settings" onClick={onSettings} aria-label="Settings">
         ⚙
       </button>
     </header>

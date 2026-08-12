@@ -271,6 +271,12 @@ export default function App() {
 
   const togglePlay = useCallback(() => {
     engine.ensureAudio()
+    // A run always begins on slot 1 of every track. Both sides are rewound
+    // before the clock moves, so this never races song mode's own advance.
+    if (!engine.playing) {
+      dispatch({ type: 'rewindSlots' })
+      engine.rewindSlots()
+    }
     engine.toggle()
     setPlaying(engine.playing)
   }, [])
